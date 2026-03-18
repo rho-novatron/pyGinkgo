@@ -41,17 +41,19 @@ def _preload_libs():
         "libginkgo",
     ]
 
+    loaded = []
     for lib_name in _lib_load_order:
         pattern = os.path.join(pkg_dir, lib_name + ext + "*")
         for lib_path in sorted(glob.glob(pattern)):
             try:
-                ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
+                loaded.append(ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL))
             except OSError:
                 # Backend not available (e.g. no CUDA) – that is fine.
                 pass
+    return loaded
 
 
-_preload_libs()
+_loaded_libs = _preload_libs()
 
 from .pyGinkgoBindings import \
     base, factorization, logger, matrix
