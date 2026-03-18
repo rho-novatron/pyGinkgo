@@ -127,14 +127,18 @@ set_property(TARGET pyGinkgoBindings PROPERTY CXX_STANDARD 14)
 
 # Set RPATH so pyGinkgoBindings can find Ginkgo shared libraries installed
 # alongside it without needing to set LD_LIBRARY_PATH manually.
+# BUILD_WITH_INSTALL_RPATH is required because the module is installed via
+# install(DIRECTORY ...) which copies files as-is without adjusting RPATH.
 if(APPLE)
   set_target_properties(pyGinkgoBindings PROPERTIES
     MACOSX_RPATH TRUE
     INSTALL_RPATH "@loader_path"
+    BUILD_WITH_INSTALL_RPATH TRUE
   )
 else()
   set_target_properties(pyGinkgoBindings PROPERTIES
     INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
   )
 endif()
 
