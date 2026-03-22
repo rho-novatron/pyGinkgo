@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 pyGinkgo authors
+# SPDX-FileCopyrightText: 2025 - 2026 pyGinkgo authors
 #
 # SPDX-License-Identifier: MIT
 
@@ -6,7 +6,7 @@
 
 These tests cover:
     - CuPy dense array ↔ Ginkgo array / dense (via __cuda_array_interface__)
-    - CuPy CSR/COO sparse ↔ Ginkgo CSR/COO (zero-copy via from_device_ptrs)
+    - CuPy CSR/COO sparse ↔ Ginkgo CSR/COO (via standard constructor / duck-typing)
     - End-to-end solver workflow (GMRES / CG with CuPy data)
     - dtype and shape preservation across conversions
 
@@ -34,6 +34,7 @@ except ImportError:
 
 # ---- helpers -----------------------------------------------------------
 
+
 def _has_cuda_device() -> bool:
     """Return True if at least one CUDA device is visible to CuPy."""
     if not cupy_avail:
@@ -54,7 +55,9 @@ def _has_gko_cuda() -> bool:
         return False
 
 
-_CUPY_TO_GKO_VALUE = {cupy.float32: "float", cupy.float64: "double"} if cupy_avail else {}
+_CUPY_TO_GKO_VALUE = (
+    {cupy.float32: "float", cupy.float64: "double"} if cupy_avail else {}
+)
 _CUPY_TO_GKO_INDEX = {cupy.int32: "int32", cupy.int64: "int64"} if cupy_avail else {}
 
 
@@ -85,6 +88,7 @@ def _cupy_coo_to_gko(coo, executor, gko_dtype, gko_itype="int32"):
 
 
 # ---- CuPy → Ginkgo array / dense (standard constructors) --------------
+
 
 @skip_no_cupy
 @skip_no_cuda
@@ -185,12 +189,11 @@ class TestCuPyToGkoDense:
         original = cupy.array([[1, 2], [3, 4]], dtype=cupy.float32)
         dense = dense_cls(executor, original)
         roundtripped = cupy.asarray(dense)
-        cupy.testing.assert_array_almost_equal(
-            original.ravel(), roundtripped.ravel()
-        )
+        cupy.testing.assert_array_almost_equal(original.ravel(), roundtripped.ravel())
 
 
 # ---- Ginkgo → CuPy (dense / array) ------------------------------------
+
 
 @skip_no_cupy
 @skip_no_cuda
@@ -226,9 +229,7 @@ class TestGkoToCuPy:
         dense = dense_cls(executor, original)
 
         roundtripped = cupy.asarray(dense)
-        cupy.testing.assert_array_almost_equal(
-            original.ravel(), roundtripped.ravel()
-        )
+        cupy.testing.assert_array_almost_equal(original.ravel(), roundtripped.ravel())
 
     @pytest.mark.parametrize(
         "cupy_dtype,gko_dtype",
@@ -287,6 +288,7 @@ class TestGkoToCuPy:
 
 # ---- CuPy CSR ↔ Ginkgo CSR -------------------------------------------
 
+
 @skip_no_cupy
 @skip_no_cupy_sparse
 @skip_no_cuda
@@ -316,7 +318,10 @@ class TestCuPyCSR:
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr(dtype)
         gko_csr = _cupy_csr_to_gko(
-            csr, executor, _CUPY_TO_GKO_VALUE[dtype], "int32",
+            csr,
+            executor,
+            _CUPY_TO_GKO_VALUE[dtype],
+            "int32",
         )
         assert gko_csr.shape == (3, 3)
         assert gko_csr.get_num_stored_elements() == 5
@@ -329,7 +334,10 @@ class TestCuPyCSR:
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr(dtype, itype)
         gko_csr = _cupy_csr_to_gko(
-            csr, executor, _CUPY_TO_GKO_VALUE[dtype], _CUPY_TO_GKO_INDEX[itype],
+            csr,
+            executor,
+            _CUPY_TO_GKO_VALUE[dtype],
+            _CUPY_TO_GKO_INDEX[itype],
         )
 
         assert gko_csr.shape == (3, 3)
@@ -392,12 +400,11 @@ class TestCuPyCSR:
             ),
             shape=gko_csr.shape,
         )
-        cupy.testing.assert_array_almost_equal(
-            original.toarray(), recovered.toarray()
-        )
+        cupy.testing.assert_array_almost_equal(original.toarray(), recovered.toarray())
 
 
 # ---- CuPy COO ↔ Ginkgo COO -------------------------------------------
+
 
 @skip_no_cupy
 @skip_no_cupy_sparse
@@ -427,7 +434,10 @@ class TestCuPyCOO:
         executor = pGB.CudaExecutor()
         coo = self._make_cupy_coo(dtype)
         gko_coo = _cupy_coo_to_gko(
-            coo, executor, _CUPY_TO_GKO_VALUE[dtype], "int32",
+            coo,
+            executor,
+            _CUPY_TO_GKO_VALUE[dtype],
+            "int32",
         )
         assert gko_coo.shape == (3, 3)
         assert gko_coo.get_num_stored_elements() == 5
@@ -440,7 +450,10 @@ class TestCuPyCOO:
         executor = pGB.CudaExecutor()
         coo = self._make_cupy_coo(dtype, itype)
         gko_coo = _cupy_coo_to_gko(
-            coo, executor, _CUPY_TO_GKO_VALUE[dtype], _CUPY_TO_GKO_INDEX[itype],
+            coo,
+            executor,
+            _CUPY_TO_GKO_VALUE[dtype],
+            _CUPY_TO_GKO_INDEX[itype],
         )
 
         assert gko_coo.shape == (3, 3)
@@ -478,12 +491,11 @@ class TestCuPyCOO:
             ),
             shape=gko_coo.shape,
         )
-        cupy.testing.assert_array_almost_equal(
-            original.toarray(), recovered.toarray()
-        )
+        cupy.testing.assert_array_almost_equal(original.toarray(), recovered.toarray())
 
 
 # ---- End-to-end solver workflow ----------------------------------------
+
 
 @skip_no_cupy
 @skip_no_cupy_sparse

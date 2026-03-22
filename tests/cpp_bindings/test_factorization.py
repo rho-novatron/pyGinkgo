@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 - 2025 pyGinkgo authors
+# SPDX-FileCopyrightText: 2024 - 2026 pyGinkgo authors
 #
 # SPDX-License-Identifier: MIT
 

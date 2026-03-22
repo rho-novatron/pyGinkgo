@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 - 2025 pyGinkgo authors
+// SPDX-FileCopyrightText: 2024 - 2026 pyGinkgo authors
 //
 // SPDX-License-Identifier: MIT
 
@@ -18,6 +18,35 @@ static std::pair<T *, size_t> cai_ptr_and_size(py::object obj)
     auto cai = obj.attr("__cuda_array_interface__").cast<py::dict>();
     auto data = cai["data"].cast<py::tuple>();
     auto shape = cai["shape"].cast<py::tuple>();
+
+    // Require a 1D array
+    if (shape.size() != 1) {
+        throw py::value_error(
+            "__cuda_array_interface__ object must be 1D for this "
+            "constructor (got " +
+            std::to_string(shape.size()) + " dimensions)");
+    }
+
+    // Require contiguous storage: strides must be None (default) or
+    // a 1-element tuple equal to sizeof(T) in bytes.
+    if (cai.contains("strides")) {
+        py::handle strides_obj = cai["strides"];
+        if (!strides_obj.is_none()) {
+            auto strides = strides_obj.cast<py::tuple>();
+            if (strides.size() != 1) {
+                throw py::value_error(
+                    "__cuda_array_interface__ 'strides' must describe a "
+                    "1D array");
+            }
+            auto stride0 = strides[0].cast<ssize_t>();
+            if (stride0 != static_cast<ssize_t>(sizeof(T))) {
+                throw py::value_error(
+                    "__cuda_array_interface__ object must be 1D and "
+                    "contiguous in memory");
+            }
+        }
+    }
+
     return {reinterpret_cast<T *>(data[0].cast<uintptr_t>()),
             shape[0].cast<size_t>()};
 }
@@ -134,6 +163,32 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
                                     "__cuda_array_interface__") &&
                         std::dynamic_pointer_cast<
                             const gko::CudaExecutor>(exec)) {
+                        // Validate dtypes before creating views to
+                        // avoid silent memory reinterpretation.
+                        auto expected_val =
+                            get_cuda_array_typestr<ValueType>();
+                        auto expected_idx =
+                            get_cuda_array_typestr<IndexType>();
+                        auto check_typestr = [](py::object arr,
+                                                const std::string &expected,
+                                                const char *name) {
+                            auto cai =
+                                arr.attr("__cuda_array_interface__")
+                                    .cast<py::dict>();
+                            auto typestr =
+                                cai["typestr"].cast<std::string>();
+                            if (typestr != expected) {
+                                throw std::runtime_error(
+                                    std::string("dtype mismatch for ") +
+                                    name +
+                                    ": __cuda_array_interface__ reports '" +
+                                    typestr + "' but expected '" +
+                                    expected + "'");
+                            }
+                        };
+                        check_typestr(data_obj, expected_val, "data");
+                        check_typestr(col_obj, expected_idx, "col_idxs");
+                        check_typestr(row_obj, expected_idx, "row_component");
                         auto [vals_ptr, nnz] =
                             cai_ptr_and_size<ValueType>(data_obj);
                         auto [cols_ptr, cols_n] =
@@ -251,9 +306,9 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
         "data",
         py::cpp_function(
             [](MatrixType<ValueType, IndexType> &m) {
-                return gko::array<ValueType>::view(
-                    m.get_executor(), m.get_num_stored_elements(),
-                    m.get_values());
+                return gko::array<ValueType>::view(m.get_executor(),
+                                                   m.get_num_stored_elements(),
+                                                   m.get_values());
             },
             py::keep_alive<0, 1>()),
         "Non-owning array view of stored values (nnz elements).");
@@ -277,8 +332,7 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
                 [](gko::matrix::Csr<ValueType, IndexType> &m) {
                     auto n_rows = m.get_size()[0];
                     return gko::array<IndexType>::view(
-                        m.get_executor(), n_rows + 1,
-                        m.get_row_ptrs());
+                        m.get_executor(), n_rows + 1, m.get_row_ptrs());
                 },
                 py::keep_alive<0, 1>()),
             "Non-owning array view of row pointers "
@@ -322,29 +376,26 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
            py::object values_obj, py::object col_idxs_obj,
            py::object row_component_obj) {
             auto [vals_ptr, nnz] = cai_ptr_and_size<ValueType>(values_obj);
-            auto [cols_ptr, cols_n] =
-                cai_ptr_and_size<IndexType>(col_idxs_obj);
+            auto [cols_ptr, cols_n] = cai_ptr_and_size<IndexType>(col_idxs_obj);
             auto [rows_ptr, rows_n] =
                 cai_ptr_and_size<IndexType>(row_component_obj);
 
-            auto vals_view =
-                gko::array<ValueType>::view(exec, nnz, vals_ptr);
+            auto vals_view = gko::array<ValueType>::view(exec, nnz, vals_ptr);
             auto cols_view =
                 gko::array<IndexType>::view(exec, cols_n, cols_ptr);
             auto rows_view =
                 gko::array<IndexType>::view(exec, rows_n, rows_ptr);
 
             return gko::share(MatrixType<ValueType, IndexType>::create(
-                exec,
-                gko::dim<2>{dim[0].cast<size_t>(), dim[1].cast<size_t>()},
+                exec, gko::dim<2>{dim[0].cast<size_t>(), dim[1].cast<size_t>()},
                 std::move(vals_view), std::move(cols_view),
                 std::move(rows_view)));
         },
         py::keep_alive<0, 3>(),  // prevent GC of values array
         py::keep_alive<0, 4>(),  // prevent GC of col_idxs array
         py::keep_alive<0, 5>(),  // prevent GC of row_ptrs/row_idxs array
-        py::arg("exec"), py::arg("dim"), py::arg("values"),
-        py::arg("col_idxs"), py::arg("row_component"),
+        py::arg("exec"), py::arg("dim"), py::arg("values"), py::arg("col_idxs"),
+        py::arg("row_component"),
         "Create a sparse matrix by wrapping CuPy device arrays as "
         "zero-copy views (via gko::array::view). "
         "The source arrays must stay alive while the matrix is in use; "

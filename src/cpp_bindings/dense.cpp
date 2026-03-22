@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 - 2025 pyGinkgo authors
+// SPDX-FileCopyrightText: 2024 - 2026 pyGinkgo authors
 //
 // SPDX-License-Identifier: MIT
 
@@ -36,132 +36,154 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
             view, cols);
     };
 
-    auto cls = py::class_<gko::matrix::Dense<ValueType>,
-                           std::shared_ptr<gko::matrix::Dense<ValueType>>,
-                           gko::LinOp>(module_matrix, pyclass_name.c_str(),
-                                       py::buffer_protocol())
-                   .def(py::init([init_func](py::buffer b) {
-                       auto ref = gko::ReferenceExecutor::create();
-                       return init_func(ref, b);
-                   }))
-                   .def(py::init([](std::shared_ptr<gko::Executor> exec) {
-                       return gko::share(
-                           gko::matrix::Dense<ValueType>::create(exec));
-                   }))
-                   .def(py::init([](std::shared_ptr<gko::Executor> exec,
-                                    py::tuple dim) {
-                       return gko::share(
-                           gko::matrix::Dense<ValueType>::create(
-                               exec,
-                               gko::dim<2>{dim[0].cast<size_t>(),
-                                           dim[1].cast<size_t>()}));
-                   }))
-                   .def(py::init([init_func](
-                                     std::shared_ptr<gko::Executor> exec,
+    auto cls =
+        py::class_<gko::matrix::Dense<ValueType>,
+                   std::shared_ptr<gko::matrix::Dense<ValueType>>, gko::LinOp>(
+            module_matrix, pyclass_name.c_str(), py::buffer_protocol())
+            .def(py::init([init_func](py::buffer b) {
+                auto ref = gko::ReferenceExecutor::create();
+                return init_func(ref, b);
+            }))
+            .def(py::init([](std::shared_ptr<gko::Executor> exec) {
+                return gko::share(gko::matrix::Dense<ValueType>::create(exec));
+            }))
+            .def(py::init([](std::shared_ptr<gko::Executor> exec,
+                             py::tuple dim) {
+                return gko::share(gko::matrix::Dense<ValueType>::create(
+                    exec,
+                    gko::dim<2>{dim[0].cast<size_t>(), dim[1].cast<size_t>()}));
+            }))
+            .def(
+                py::init([init_func](std::shared_ptr<gko::Executor> exec,
                                      py::object obj) {
 #ifdef GINKGO_BUILD_CUDA
-                       // Fast path: if the input exposes
-                       // __cuda_array_interface__ and the executor is
-                       // a CUDA executor, create a zero-copy view.
-                       // py::keep_alive<1,3> ensures the source object
-                       // stays alive while this dense matrix exists.
-                       if (py::hasattr(obj, "__cuda_array_interface__") &&
-                           std::dynamic_pointer_cast<const gko::CudaExecutor>(
-                               exec)) {
-                           auto cai =
-                               obj.attr("__cuda_array_interface__")
-                                   .cast<py::dict>();
-                           auto shape = cai["shape"].cast<py::tuple>();
-                           auto typestr =
-                               cai["typestr"].cast<std::string>();
-                           auto expected =
-                               get_cuda_array_typestr<ValueType>();
-                           if (typestr != expected) {
-                               throw std::runtime_error(
-                                   "dtype mismatch: "
-                                   "__cuda_array_interface__ reports '" +
-                                   typestr +
-                                   "' but this dense type expects '" +
-                                   expected + "'");
-                           }
-                           auto data = cai["data"].cast<py::tuple>();
-                           auto ptr = data[0].cast<uintptr_t>();
-                           auto rows = shape[0].cast<size_t>();
-                           auto cols = (py::len(shape) > 1)
-                                           ? shape[1].cast<size_t>()
-                                           : 1;
-                           auto stride = cols;  // C-contiguous
+                    // Fast path: if the input exposes
+                    // __cuda_array_interface__ and the executor is
+                    // a CUDA executor, create a zero-copy view.
+                    // py::keep_alive<1,3> ensures the source object
+                    // stays alive while this dense matrix exists.
+                    if (py::hasattr(obj, "__cuda_array_interface__") &&
+                        std::dynamic_pointer_cast<const gko::CudaExecutor>(
+                            exec)) {
+                        auto cai = obj.attr("__cuda_array_interface__")
+                                       .cast<py::dict>();
+                        auto shape = cai["shape"].cast<py::tuple>();
+                        // Validate: only 1D or 2D inputs are supported
+                        if (py::len(shape) < 1 || py::len(shape) > 2) {
+                            throw std::runtime_error(
+                                "__cuda_array_interface__ shape "
+                                "must be 1D or 2D (got " +
+                                std::to_string(py::len(shape)) +
+                                " dimensions)");
+                        }
+                        auto typestr = cai["typestr"].cast<std::string>();
+                        auto expected = get_cuda_array_typestr<ValueType>();
+                        if (typestr != expected) {
+                            throw std::runtime_error(
+                                "dtype mismatch: "
+                                "__cuda_array_interface__ reports '" +
+                                typestr + "' but this dense type expects '" +
+                                expected + "'");
+                        }
+                        auto data = cai["data"].cast<py::tuple>();
+                        auto ptr = data[0].cast<uintptr_t>();
+                        auto rows = shape[0].cast<size_t>();
+                        auto cols =
+                            (py::len(shape) > 1) ? shape[1].cast<size_t>() : 1;
+                        // Validate strides: must be None or row-major
+                        // contiguous (stride[0] == cols*sizeof(T),
+                        // stride[1] == sizeof(T))
+                        if (cai.contains("strides")) {
+                            py::handle strides_obj = cai["strides"];
+                            if (!strides_obj.is_none()) {
+                                auto strides = strides_obj.cast<py::tuple>();
+                                bool contiguous = true;
+                                if (strides.size() == 2) {
+                                    auto s0 = strides[0].cast<ssize_t>();
+                                    auto s1 = strides[1].cast<ssize_t>();
+                                    if (s1 != static_cast<ssize_t>(
+                                                  sizeof(ValueType)) ||
+                                        s0 != static_cast<ssize_t>(
+                                                  cols * sizeof(ValueType))) {
+                                        contiguous = false;
+                                    }
+                                } else if (strides.size() == 1) {
+                                    auto s0 = strides[0].cast<ssize_t>();
+                                    if (s0 != static_cast<ssize_t>(
+                                                  sizeof(ValueType))) {
+                                        contiguous = false;
+                                    }
+                                }
+                                if (!contiguous) {
+                                    throw std::runtime_error(
+                                        "__cuda_array_interface__ "
+                                        "object must be "
+                                        "row-major contiguous");
+                                }
+                            }
+                        }
+                        auto stride = cols;  // C-contiguous
 
-                           auto view = gko::array<ValueType>::view(
-                               exec, rows * stride,
-                               reinterpret_cast<ValueType *>(ptr));
-                           return gko::share(
-                               gko::matrix::Dense<ValueType>::create(
-                                   exec,
-                                   gko::dim<2>{
-                                       static_cast<dim_type>(rows),
-                                       static_cast<dim_type>(cols)},
-                                   std::move(view), stride));
-                       }
+                        auto view = gko::array<ValueType>::view(
+                            exec, rows * stride,
+                            reinterpret_cast<ValueType *>(ptr));
+                        return gko::share(gko::matrix::Dense<ValueType>::create(
+                            exec,
+                            gko::dim<2>{static_cast<dim_type>(rows),
+                                        static_cast<dim_type>(cols)},
+                            std::move(view), stride));
+                    }
 #endif
-                       // Fallback: use buffer protocol (host memory)
-                       auto b = py::array_t<ValueType,
-                                            py::array::c_style |
-                                                py::array::forcecast>(obj);
-                       return gko::share(init_func(exec, b));
-                   }),
-                   py::keep_alive<1, 3>())
-                   .def(py::init([](std::shared_ptr<gko::Executor> exec,
-                                    py::tuple dim, int stride) {
-                       return gko::share(
-                           gko::matrix::Dense<ValueType>::create(
-                               exec,
-                               gko::dim<2>{dim[0].cast<dim_type>(),
-                                           dim[1].cast<dim_type>()},
-                               stride));
-                   }))
-                   .def(py::init([](std::shared_ptr<gko::Executor> exec,
-                                    py::tuple dim, py::buffer b,
-                                    size_t stride) {
-                       py::buffer_info info = b.request();
-                       check_buffer_dtype<ValueType>(info);
+                    // Fallback: use buffer protocol (host memory)
+                    auto b =
+                        py::array_t<ValueType, py::array::c_style |
+                                                   py::array::forcecast>(obj);
+                    return gko::share(init_func(exec, b));
+                }),
+                py::keep_alive<1, 3>())
+            .def(py::init([](std::shared_ptr<gko::Executor> exec, py::tuple dim,
+                             int stride) {
+                return gko::share(gko::matrix::Dense<ValueType>::create(
+                    exec,
+                    gko::dim<2>{dim[0].cast<dim_type>(),
+                                dim[1].cast<dim_type>()},
+                    stride));
+            }))
+            .def(py::init([](std::shared_ptr<gko::Executor> exec, py::tuple dim,
+                             py::buffer b, size_t stride) {
+                py::buffer_info info = b.request();
+                check_buffer_dtype<ValueType>(info);
 
-                       auto ref = gko::ReferenceExecutor::create();
+                auto ref = gko::ReferenceExecutor::create();
 
-                       /* create a view into numpy data */
-                       auto elems = (info.ndim == 1)
-                                        ? info.shape[0]
-                                        : info.shape[0] * info.shape[1];
+                /* create a view into numpy data */
+                auto elems = (info.ndim == 1) ? info.shape[0]
+                                              : info.shape[0] * info.shape[1];
 
-                       auto view = gko::array<ValueType>::view(
-                           ref, elems, (ValueType *)info.ptr);
+                auto view = gko::array<ValueType>::view(ref, elems,
+                                                        (ValueType *)info.ptr);
 
-                       auto rows = info.shape[0];
-                       auto cols = (info.ndim == 1) ? 1 : info.shape[1];
+                auto rows = info.shape[0];
+                auto cols = (info.ndim == 1) ? 1 : info.shape[1];
 
-                       return gko::share(
-                           gko::matrix::Dense<ValueType>::create(
-                               exec,
-                               gko::dim<2>{dim[0].cast<dim_type>(),
-                                           dim[1].cast<dim_type>()},
-                               view, stride));
-                   }))
-                   .def(py::init([](std::shared_ptr<gko::Executor> exec,
-                                    py::tuple dim,
-                                    gko::array<ValueType> view,
-                                    size_t stride) {
-                       return gko::share(
-                           gko::matrix::Dense<ValueType>::create(
-                               exec,
-                               gko::dim<2>{dim[0].cast<dim_type>(),
-                                           dim[1].cast<dim_type>()},
-                               view, stride));
-                   }));
+                return gko::share(gko::matrix::Dense<ValueType>::create(
+                    exec,
+                    gko::dim<2>{dim[0].cast<dim_type>(),
+                                dim[1].cast<dim_type>()},
+                    view, stride));
+            }))
+            .def(py::init([](std::shared_ptr<gko::Executor> exec, py::tuple dim,
+                             gko::array<ValueType> view, size_t stride) {
+                return gko::share(gko::matrix::Dense<ValueType>::create(
+                    exec,
+                    gko::dim<2>{dim[0].cast<dim_type>(),
+                                dim[1].cast<dim_type>()},
+                    view, stride));
+            }));
 
     cls.def("__repr__",
             [=](const gko::matrix::Dense<ValueType> &o) {
-                auto str =
-                    "pygko.matrix." + pyclass_name + " object of size ";
+                auto str = "pygko.matrix." + pyclass_name + " object of size ";
                 auto elems = o.get_num_stored_elements();
                 str += std::to_string(elems);
                 if (o.get_executor() == o.get_executor()->get_master()) {
@@ -341,22 +363,20 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
             size_t rows = gko_size[0];
             size_t cols = gko_size[1];
 
+            // Synchronize to ensure pending work is complete
+            // before a consumer reads the data.
+            exec->synchronize();
             py::dict interface;
-            if (cols == 1) {
-                interface["shape"] = py::make_tuple(rows);
-                interface["strides"] = py::none();
-            } else {
-                interface["shape"] = py::make_tuple(rows, cols);
-                interface["strides"] =
-                    py::make_tuple(static_cast<long>(m.get_stride() *
-                                                     sizeof(ValueType)),
-                                   static_cast<long>(sizeof(ValueType)));
-            }
+            interface["shape"] = py::make_tuple(rows, cols);
+            interface["strides"] = py::make_tuple(
+                static_cast<long>(m.get_stride() * sizeof(ValueType)),
+                static_cast<long>(sizeof(ValueType)));
             interface["typestr"] = get_cuda_array_typestr<ValueType>();
-            interface["data"] = py::make_tuple(
-                reinterpret_cast<uintptr_t>(m.get_values()),
-                false);  // (ptr, read_only)
+            interface["data"] =
+                py::make_tuple(reinterpret_cast<uintptr_t>(m.get_values()),
+                               false);  // (ptr, read_only)
             interface["version"] = 3;
+            interface["stream"] = 1;  // synchronize on default stream
             return interface;
         });
 
@@ -375,9 +395,8 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                 view, stride);
             // Create an owning copy
             auto result = gko::share(gko::matrix::Dense<ValueType>::create(
-                exec,
-                gko::dim<2>{static_cast<dim_type>(rows),
-                            static_cast<dim_type>(cols)}));
+                exec, gko::dim<2>{static_cast<dim_type>(rows),
+                                  static_cast<dim_type>(cols)}));
             result->operator=(*source);
             return result;
         },
