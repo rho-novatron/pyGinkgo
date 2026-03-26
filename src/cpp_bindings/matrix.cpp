@@ -404,7 +404,6 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
     // Expose raw device pointers for the internal component arrays so
     // that the Python layer can construct CuPy sparse matrices from a
     // Ginkgo sparse matrix without a device→host round-trip.
-
     cls.def(
         "get_values_device_ptr",
         [](const MatrixType<ValueType, IndexType> &m) -> uintptr_t {
