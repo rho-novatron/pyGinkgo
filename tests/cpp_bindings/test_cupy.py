@@ -46,7 +46,7 @@ def _has_cuda_device() -> bool:
 
 
 def _has_gko_cuda() -> bool:
-    """Return True if pyGinkgo was compiled with CUDA support."""
+    """Return True if pyGinkgo was compiled with CUDA support and a CUDA capable device is detected."""
     try:
         import pyGinkgo.pyGinkgoBindings as pGB
 
