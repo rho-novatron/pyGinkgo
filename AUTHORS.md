@@ -5,3 +5,4 @@ license, as specified in the repository's LICENSE file.
 
 Gregor Olenik <gregor.olenik@kit.edu>, Karlsruhe Institute of Technology\
 Keshvi Tuteja <keshvi.tuteja@kit.edu>, Karlsruhe Institute of Technology
+Rickard Holmberg <rickard.holmberg@novatronfusion.com>, Novatron Fusion Group

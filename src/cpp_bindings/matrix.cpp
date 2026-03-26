@@ -292,16 +292,6 @@ void init_matrix(py::module_ &module, const std::string matrix_type,
                 },
                 "Returns dense representation of the matrix");
 
-    // Component array properties (scipy / CuPy compatible names).
-    // These return non-owning gko::array views into the sparse
-    // matrix's internal storage.  On CUDA executors the returned
-    // arrays expose __cuda_array_interface__; on CPU they support
-    // the buffer protocol.
-    //
-    // pybind11's def_property family does not support keep_alive,
-    // so we wrap the getter in py::cpp_function with keep_alive
-    // attached, then pass it to def_property_readonly.
-
     cls.def_property_readonly(
         "data",
         py::cpp_function(

@@ -85,3 +85,8 @@ class ExecutorType(DatatypeEnum):
     dpcpp = enum.auto()
 
 DeviceType = Union[ExecutorType, pGB.Executor, str]
+
+# Reverse mappings: numpy dtype → Ginkgo type string.
+# CuPy dtypes are numpy-compatible, so these work for both.
+NUMPY_TO_GKO_VALUE = {v.numpy_type: v.value for v in ValueType}
+NUMPY_TO_GKO_INDEX = {v.numpy_type: v.value for v in IndexType}

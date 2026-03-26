@@ -31,6 +31,11 @@ try:
 except ImportError:
     cupy_sparse_avail = False
 
+import pyGinkgo as pg
+import pyGinkgo.pyGinkgoBindings as pGB
+from pyGinkgo.device import cuda_available
+from pyGinkgo.gko_types import NUMPY_TO_GKO_VALUE, NUMPY_TO_GKO_INDEX
+
 
 # ---- helpers -----------------------------------------------------------
 
@@ -45,44 +50,24 @@ def _has_cuda_device() -> bool:
         return False
 
 
-def _has_gko_cuda() -> bool:
-    """Return True if pyGinkgo was compiled with CUDA support and a CUDA capable device is detected."""
-    try:
-        import pyGinkgo.pyGinkgoBindings as pGB
-
-        return hasattr(pGB, "CudaExecutor") and pGB.CudaExecutor.get_num_devices() > 0
-    except Exception:
-        return False
-
-
-_CUPY_TO_GKO_VALUE = (
-    {cupy.float32: "float", cupy.float64: "double"} if cupy_avail else {}
-)
-_CUPY_TO_GKO_INDEX = {cupy.int32: "int32", cupy.int64: "int64"} if cupy_avail else {}
-
-
 skip_no_cupy = pytest.mark.skipif(not cupy_avail, reason="CuPy is not installed")
 skip_no_cupy_sparse = pytest.mark.skipif(
     not cupy_sparse_avail, reason="cupyx.scipy.sparse is not installed"
 )
 skip_no_cuda = pytest.mark.skipif(
-    not _has_cuda_device() or not _has_gko_cuda(),
+    not _has_cuda_device() or not cuda_available(),
     reason="No CUDA device or pyGinkgo built without CUDA",
 )
 
 
 def _cupy_csr_to_gko(csr, executor, gko_dtype, gko_itype="int32"):
     """Wrap a CuPy CSR as a Ginkgo CSR via the standard constructor."""
-    import pyGinkgo.pyGinkgoBindings as pGB
-
     csr_cls = getattr(pGB.matrix, f"Csr_{gko_dtype}_{gko_itype}")
     return csr_cls(executor, csr)
 
 
 def _cupy_coo_to_gko(coo, executor, gko_dtype, gko_itype="int32"):
     """Wrap a CuPy COO as a Ginkgo COO via the standard constructor."""
-    import pyGinkgo.pyGinkgoBindings as pGB
-
     coo_cls = getattr(pGB.matrix, f"Coo_{gko_dtype}_{gko_itype}")
     return coo_cls(executor, coo)
 
@@ -97,8 +82,6 @@ class TestCuPyToGkoArray:
 
     @pytest.mark.parametrize("dtype", ["float", "double"])
     def test_basic_conversion(self, dtype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         cp_dtype = cupy.float32 if dtype == "float" else cupy.float64
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_" + dtype)
@@ -110,8 +93,6 @@ class TestCuPyToGkoArray:
     @pytest.mark.parametrize("dtype", ["float", "double"])
     def test_zero_copy(self, dtype):
         """Verify that the device pointer is the same (zero-copy)."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         cp_dtype = cupy.float32 if dtype == "float" else cupy.float64
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_" + dtype)
@@ -121,12 +102,12 @@ class TestCuPyToGkoArray:
 
         cp_ptr = cp_arr.__cuda_array_interface__["data"][0]
         gko_ptr = gko_arr.__cuda_array_interface__["data"][0]
+        assert cp_ptr != 0
+        assert gko_ptr != 0
         assert cp_ptr == gko_ptr
 
     def test_roundtrip(self):
         """CuPy → array_cls → cupy.asarray roundtrip."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_double")
 
@@ -143,8 +124,6 @@ class TestCuPyToGkoDense:
 
     @pytest.mark.parametrize("dtype", ["float", "double"])
     def test_1d_conversion(self, dtype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         cp_dtype = cupy.float32 if dtype == "float" else cupy.float64
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_" + dtype)
@@ -154,8 +133,6 @@ class TestCuPyToGkoDense:
         assert dense.shape == (3, 1)
 
     def test_2d_conversion(self):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_double")
 
@@ -166,8 +143,6 @@ class TestCuPyToGkoDense:
     @pytest.mark.parametrize("dtype", ["float", "double"])
     def test_zero_copy(self, dtype):
         """Verify that the device pointer is the same (zero-copy)."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         cp_dtype = cupy.float32 if dtype == "float" else cupy.float64
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_" + dtype)
@@ -177,12 +152,12 @@ class TestCuPyToGkoDense:
 
         cp_ptr = cp_arr.__cuda_array_interface__["data"][0]
         gko_ptr = dense.__cuda_array_interface__["data"][0]
+        assert cp_ptr != 0
+        assert gko_ptr != 0
         assert cp_ptr == gko_ptr
 
     def test_roundtrip(self):
         """CuPy → dense_cls → cupy.asarray roundtrip."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_float")
 
@@ -208,8 +183,6 @@ class TestGkoToCuPy:
         ],
     )
     def test_array_roundtrip(self, cupy_dtype, gko_dtype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_" + gko_dtype)
 
@@ -220,8 +193,6 @@ class TestGkoToCuPy:
         cupy.testing.assert_array_almost_equal(original, roundtripped)
 
     def test_dense_roundtrip(self):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_double")
 
@@ -239,8 +210,6 @@ class TestGkoToCuPy:
         ],
     )
     def test_gko_array_has_cuda_interface(self, cupy_dtype, gko_dtype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_" + gko_dtype)
 
@@ -254,8 +223,6 @@ class TestGkoToCuPy:
         assert isinstance(cai["data"], tuple)
 
     def test_gko_dense_has_cuda_interface(self):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         dense_cls = getattr(pGB.matrix, "dense_double")
 
@@ -265,8 +232,6 @@ class TestGkoToCuPy:
 
     def test_cupy_asarray_zero_copy(self):
         """cupy.asarray(gko_obj) creates a zero-copy view via CAI."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         array_cls = getattr(pGB.base, "array_double")
 
@@ -277,8 +242,6 @@ class TestGkoToCuPy:
 
     def test_host_array_no_cuda_interface(self):
         """CPU arrays must NOT expose __cuda_array_interface__."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         ref = pGB.ReferenceExecutor()
         np_arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         array_cls = getattr(pGB.base, "array_float")
@@ -313,14 +276,12 @@ class TestCuPyCSR:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     def test_csr_constructor(self, dtype):
         """Csr_cls(executor, cupy_csr) creates a Ginkgo CSR."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr(dtype)
         gko_csr = _cupy_csr_to_gko(
             csr,
             executor,
-            _CUPY_TO_GKO_VALUE[dtype],
+            NUMPY_TO_GKO_VALUE[dtype],
             "int32",
         )
         assert gko_csr.shape == (3, 3)
@@ -329,15 +290,13 @@ class TestCuPyCSR:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     @pytest.mark.parametrize("itype", [cupy.int32, cupy.int64])
     def test_csr_constructor_dtypes(self, dtype, itype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr(dtype, itype)
         gko_csr = _cupy_csr_to_gko(
             csr,
             executor,
-            _CUPY_TO_GKO_VALUE[dtype],
-            _CUPY_TO_GKO_INDEX[itype],
+            NUMPY_TO_GKO_VALUE[dtype],
+            NUMPY_TO_GKO_INDEX[itype],
         )
 
         assert gko_csr.shape == (3, 3)
@@ -346,11 +305,9 @@ class TestCuPyCSR:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     def test_csr_spmv(self, dtype):
         """CSR matrix–vector product (SpMV) with CuPy data."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr(dtype)
-        gko_dtype = _CUPY_TO_GKO_VALUE[dtype]
+        gko_dtype = NUMPY_TO_GKO_VALUE[dtype]
         gko_csr = _cupy_csr_to_gko(csr, executor, gko_dtype, "int32")
 
         dense_cls = getattr(pGB.matrix, f"dense_{gko_dtype}")
@@ -369,8 +326,6 @@ class TestCuPyCSR:
 
     def test_csr_component_properties(self):
         """gko_csr.data / .indices / .indptr return array views with CAI."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         csr = self._make_cupy_csr()
         gko_csr = _cupy_csr_to_gko(csr, executor, "double", "int32")
@@ -386,8 +341,6 @@ class TestCuPyCSR:
 
     def test_csr_roundtrip_via_properties(self):
         """CuPy CSR → Ginkgo → CuPy CSR roundtrip using properties."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         original = self._make_cupy_csr()
         gko_csr = _cupy_csr_to_gko(original, executor, "double", "int32")
@@ -429,14 +382,12 @@ class TestCuPyCOO:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     def test_coo_constructor(self, dtype):
         """Coo_cls(executor, cupy_coo) creates a Ginkgo COO."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         coo = self._make_cupy_coo(dtype)
         gko_coo = _cupy_coo_to_gko(
             coo,
             executor,
-            _CUPY_TO_GKO_VALUE[dtype],
+            NUMPY_TO_GKO_VALUE[dtype],
             "int32",
         )
         assert gko_coo.shape == (3, 3)
@@ -445,15 +396,13 @@ class TestCuPyCOO:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     @pytest.mark.parametrize("itype", [cupy.int32, cupy.int64])
     def test_coo_constructor_dtypes(self, dtype, itype):
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         coo = self._make_cupy_coo(dtype, itype)
         gko_coo = _cupy_coo_to_gko(
             coo,
             executor,
-            _CUPY_TO_GKO_VALUE[dtype],
-            _CUPY_TO_GKO_INDEX[itype],
+            NUMPY_TO_GKO_VALUE[dtype],
+            NUMPY_TO_GKO_INDEX[itype],
         )
 
         assert gko_coo.shape == (3, 3)
@@ -461,8 +410,6 @@ class TestCuPyCOO:
 
     def test_coo_component_properties(self):
         """gko_coo.data / .col / .row return array views with CAI."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         coo = self._make_cupy_coo()
         gko_coo = _cupy_coo_to_gko(coo, executor, "double", "int32")
@@ -478,8 +425,6 @@ class TestCuPyCOO:
 
     def test_coo_roundtrip_via_properties(self):
         """CuPy COO → Ginkgo → CuPy COO roundtrip using properties."""
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         executor = pGB.CudaExecutor()
         original = self._make_cupy_coo()
         gko_coo = _cupy_coo_to_gko(original, executor, "double", "int32")
@@ -529,9 +474,6 @@ class TestSolverWorkflow:
 
     def test_solve_gmres_with_cupy_csr(self):
         """GMRES solver using a CuPy CSR matrix (zero-copy)."""
-        import pyGinkgo as pg
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         A_csr, b_cp = self._make_spd_system(n=10)
         executor = pGB.CudaExecutor()
 
@@ -557,9 +499,6 @@ class TestSolverWorkflow:
 
     def test_solve_cg_with_cupy_csr(self):
         """CG solver using a CuPy CSR matrix (zero-copy, SPD system)."""
-        import pyGinkgo as pg
-        import pyGinkgo.pyGinkgoBindings as pGB
-
         A_csr, b_cp = self._make_spd_system(n=10)
         executor = pGB.CudaExecutor()
 
@@ -585,10 +524,7 @@ class TestSolverWorkflow:
     @pytest.mark.parametrize("dtype", [cupy.float32, cupy.float64])
     def test_solve_preserves_dtype(self, dtype):
         """The solver output dtype matches the input dtype."""
-        import pyGinkgo as pg
-        import pyGinkgo.pyGinkgoBindings as pGB
-
-        gko_dtype = _CUPY_TO_GKO_VALUE[dtype]
+        gko_dtype = NUMPY_TO_GKO_VALUE[dtype]
         A_csr, b_cp = self._make_spd_system(n=5, dtype=dtype)
         executor = pGB.CudaExecutor()
 

@@ -5,7 +5,15 @@
 from . import gko_types
 from . import pyGinkgoBindings as pGB
 from typing import Optional
-    
+
+
+def cuda_available() -> bool:
+    """Return True if pyGinkgo was compiled with CUDA support and a CUDA capable device is detected."""
+    try:
+        return hasattr(pGB, "CudaExecutor") and pGB.CudaExecutor.get_num_devices() > 0
+    except RuntimeError:
+        return False
+
 
 def device(type: gko_types.DeviceType = "cpu", index: Optional[int] = None) -> pGB.Executor:
     """
